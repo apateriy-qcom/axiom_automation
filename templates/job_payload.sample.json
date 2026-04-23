@@ -1,0 +1,26 @@
+{
+  "team": "/Product/SAGA",
+  "metaBuild": {
+    "path": "\\\\builds\\latest",
+    "storageType": "UFS",
+    "storageLayout": "Auto",
+    "productFlavor": "Auto",
+    "binaryType": "Auto"
+  },
+  "playlistVersionMode": "LastPublished",
+  "playlists": [
+    {
+      "id": 12345,
+      "iteration": 1
+    }
+  ],
+  "resource": {
+    "type": "Device",
+    "identifier": "SERIAL12345"
+  },
+  "optional": {
+    "tags": [
+      "Automation"
+    ]
+  }
+}

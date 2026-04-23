@@ -1,0 +1,4 @@
+interface:
+  display_name: "Axiom Public API"
+  short_description: "Automate Axiom API workflows safely"
+  default_prompt: "Use this skill to authenticate, refresh permissions, and compose robust Axiom Public API requests for read/write operations."

@@ -1,0 +1,13 @@
+{
+  "reportType": "SoftwareProduct",
+  "softwareProduct": "SA8540P.QX.1.0.r1",
+  "milestone": "sample-milestone",
+  "startDate": "2025-04-01T00:00:00Z",
+  "endDate": "2025-04-30T23:59:59Z",
+  "teams": [
+    "/Product/SAGA"
+  ],
+  "projectionMethod": "CoveragePlan",
+  "buildComposition": "All",
+  "groupResultsBy": "Taxonomy"
+}
