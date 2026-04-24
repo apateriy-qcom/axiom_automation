@@ -41,7 +41,7 @@ Optional:
 - `AXIOM_ACCESS_TOKEN` (if you already have a token)
 
 Note:
-- If `AXIOM_ACCESS_TOKEN` is not set, the script will request a token using client credentials.
+- The script always requests a fresh token using client credentials on every run.
 - Shell environment variables override values from `.env`.
 
 ### 2. Generate starter payloads
@@ -90,15 +90,9 @@ python3 axiom_flow.py \
   --create-report-instance
 ```
 
-## Authentication Options
+## Authentication
 
-Choose one:
-
-1. Access token
-- CLI: `--access-token ...`
-- Env: `AXIOM_ACCESS_TOKEN`
-
-2. Client credentials
+Fresh OAuth token is minted on every run using client credentials:
 - CLI: `--client-id ... --client-secret ...`
 - Env: `AXIOM_CLIENT_ID`, `AXIOM_CLIENT_SECRET`
 
@@ -134,6 +128,7 @@ Typical artifacts in `--out-dir`:
 - `job_info_final.json`
 - `job_results_page_0.json`
 - `job_logs_summary.json`
+- `connectivity_evidence.json` (host/device/serial/adb-port evidence summary from payload + results)
 - `coveragereport_create_response.json` (if report enabled)
 - `coveragereport_instance_response.json` (if report instance enabled)
 - `resource_by_id_response.json` (if `--resource-id` is provided)
@@ -158,3 +153,8 @@ Typical artifacts in `--out-dir`:
 
 - Do not commit `.env`, tokens, or secrets.
 - Keep outputs in `tmp/` (already ignored by git).
+
+## Runbook
+
+- No-failure submission workflow: `RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md`
+- Assignment/host/serial watcher: `scripts/watch_job_assignment.py`

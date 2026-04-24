@@ -8,6 +8,7 @@ import base64
 import shutil
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -55,10 +56,10 @@ def parse_args() -> argparse.Namespace:
         help="Path to env file. Variables already in shell take precedence.",
     )
     parser.add_argument("--apigee-url", default="https://api-int.qualcomm.com")
-    parser.add_argument("--access-token", help="OAuth bearer token")
-    parser.add_argument("--client-id", help="OAuth client ID (used if access token missing)")
+    parser.add_argument("--access-token", help="Deprecated: ignored. Fresh token is always minted.")
+    parser.add_argument("--client-id", help="OAuth client ID (always used to mint fresh token)")
     parser.add_argument(
-        "--client-secret", help="OAuth client secret (used if access token missing)"
+        "--client-secret", help="OAuth client secret (always used to mint fresh token)"
     )
     parser.add_argument(
         "--trace-id", default=uuid.uuid4().hex, help="Tracing ID header value"
@@ -188,19 +189,15 @@ def request_json(
 
 
 def ensure_token(args: argparse.Namespace) -> str:
-    env_access_token = os.environ.get("AXIOM_ACCESS_TOKEN", "").strip()
     env_client_id = os.environ.get("AXIOM_CLIENT_ID", "").strip()
     env_client_secret = os.environ.get("AXIOM_CLIENT_SECRET", "").strip()
 
-    access_token = args.access_token or env_access_token
     client_id = args.client_id or env_client_id
     client_secret = args.client_secret or env_client_secret
 
-    if access_token:
-        return access_token
     if not (client_id and client_secret):
         raise ValueError(
-            "Provide auth via --access-token, or --client-id/--client-secret, or AXIOM_ACCESS_TOKEN / AXIOM_CLIENT_ID+AXIOM_CLIENT_SECRET env vars"
+            "Missing client credentials. Provide --client-id/--client-secret or AXIOM_CLIENT_ID+AXIOM_CLIENT_SECRET env vars."
         )
 
     encoded = base64.b64encode(
@@ -386,6 +383,115 @@ def get_resource(
     return resp
 
 
+def build_connectivity_evidence(
+    job_payload_file: str,
+    final_info: Dict[str, Any],
+    results_page: Dict[str, Any],
+) -> Dict[str, Any]:
+    payload = read_json(job_payload_file)
+    rows = (results_page or {}).get("data") or []
+
+    hostnames = sorted(
+        {
+            str(v)
+            for row in rows
+            for v in [row.get("playlistHostName"), row.get("testCaseHostName")]
+            if v
+        }
+    )
+    test_resources = sorted(
+        {
+            str(v)
+            for row in rows
+            for v in [row.get("playlistTestResource"), row.get("testCaseTestResourceName")]
+            if v
+        }
+    )
+    result_values = [str(row.get("testCaseTestResult")) for row in rows if row.get("testCaseTestResult")]
+    passed_count = sum(1 for r in result_values if r.lower() in {"pass", "passed", "success"})
+
+    serial_keys = sorted(
+        {
+            key
+            for row in rows
+            for key in row.keys()
+            if "serial" in key.lower()
+        }
+    )
+    serial_values = sorted(
+        {
+            str(row.get(key))
+            for row in rows
+            for key in serial_keys
+            if row.get(key)
+        }
+    )
+    requested_serial = (payload.get("resource") or {}).get("identifier")
+    if requested_serial and requested_serial not in serial_values:
+        serial_values = [requested_serial, *serial_values]
+
+    adb_related_keys = sorted(
+        {
+            key
+            for row in rows
+            for key in row.keys()
+            if ("adb" in key.lower()) or ("port" in key.lower())
+        }
+    )
+    adb_ports = set()
+    pattern = re.compile(r"(?i)(?:adb[^0-9]{0,20}(\d{4,5})|(\d{4,5})[^0-9]{0,20}adb)")
+    for row in rows:
+        for key, value in row.items():
+            if not isinstance(value, str):
+                continue
+            if "adb" not in value.lower():
+                continue
+            for match in pattern.finditer(value):
+                port = match.group(1) or match.group(2)
+                if port:
+                    adb_ports.add(port)
+
+    evidence = {
+        "device_request": {
+            "requested_via_jobs_submit": True,
+            "team": payload.get("team"),
+            "metaBuild": payload.get("metaBuild"),
+            "playlistVersionMode": payload.get("playlistVersionMode"),
+            "playlists": payload.get("playlists"),
+            "resource": payload.get("resource"),
+        },
+        "job_progress": {
+            "jobId": final_info.get("jobId"),
+            "state": final_info.get("state"),
+            "jobSetupState": final_info.get("jobSetupState"),
+            "submitted": final_info.get("submitted"),
+            "started": final_info.get("started"),
+            "ended": final_info.get("ended"),
+        },
+        "assigned_windows_host_access": {
+            "observed_hostnames": hostnames,
+            "observed_in_results_count": len(hostnames),
+            "checked_from_fields": ["playlistHostName", "testCaseHostName"],
+        },
+        "target_device_access_on_host": {
+            "observed_test_resources": test_resources,
+            "results_count": len(rows),
+            "passed_testcase_count": passed_count,
+            "checked_from_fields": ["playlistTestResource", "testCaseTestResourceName", "testCaseTestResult"],
+        },
+        "serial_access": {
+            "candidate_serials": serial_values,
+            "checked_from_fields": ["resource.identifier", *serial_keys],
+        },
+        "adb_port_access": {
+            "candidate_adb_ports": sorted(adb_ports),
+            "checked_from_fields": adb_related_keys,
+            "note": "ADB port is inferred from result metadata strings only; testcase logs may contain additional details.",
+        },
+    }
+    return evidence
+
+
 def main() -> int:
     args = parse_args()
     load_dotenv(args.env_file)
@@ -440,6 +546,10 @@ def main() -> int:
 
     logs = fetch_results_logs(job_id, args, base_url, headers, out_dir)
     summary["logs"] = logs
+    results_page = read_json(str(out_dir / "job_results_page_0.json"))
+    evidence = build_connectivity_evidence(args.job_payload_file, final_info, results_page)
+    write_json(out_dir / "connectivity_evidence.json", evidence)
+    summary["connectivity_evidence"] = evidence
 
     if args.report_payload_file:
         summary["report"] = create_report(

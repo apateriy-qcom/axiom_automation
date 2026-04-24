@@ -1,7 +1,7 @@
 {
   "team": "/Product/SAGA",
   "metaBuild": {
-    "path": "\\\\builds\\latest",
+    "path": "\\\\crmhyd\\nsid-hyd-05\\QCS8300.LE.1.0.r1-00203-ADV.INT-2",
     "storageType": "UFS",
     "storageLayout": "Auto",
     "productFlavor": "Auto",
