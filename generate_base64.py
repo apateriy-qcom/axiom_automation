@@ -1,8 +1,9 @@
 import base64
+import os
 
-# Client Id & Secret
-client_id = 'EnTJqIvoTeiJ4DOJzsnuEUbTWskGiHrF0ksEe0jxh6tMnPiD' #KEY
-client_secret = 'MMsosPKqvsBDV79coEja8Hl5WvAAStgeGtKLqmHnCrUiA29z11gV3y93BavZZovl' #secret
+# Client Id & Secret (read from environment variables)
+client_id = os.environ["AXIOM_CLIENT_ID"]
+client_secret = os.environ["AXIOM_CLIENT_SECRET"]
 
 # Concatenate client_id and client_secret
 credentials = f"{client_id}:{client_secret}"
