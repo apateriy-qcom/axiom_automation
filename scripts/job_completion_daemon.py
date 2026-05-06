@@ -38,6 +38,7 @@ import imaplib
 import json
 import logging
 import os
+import getpass
 import smtplib
 import ssl
 import sys
@@ -302,6 +303,19 @@ class JobWatcher(threading.Thread):
         self.smtp_user = os.environ.get("SMTP_USER", "anurag.pateriya@oss.qualcomm.com")
         self.smtp_pass = os.environ.get("SMTP_PASS", "")
         self.from_addr = os.environ.get("NOTIFY_EMAIL", "anurag.pateriya@oss.qualcomm.com")
+        self.win_user  = os.environ.get("WINDOWS_USER", "").strip()
+        self.win_domain = os.environ.get("WINDOWS_DOMAIN", "").strip()
+        # Prompt for Windows password if user is set but password is missing
+        win_pass = os.environ.get("WINDOWS_PASS", "").strip()
+        if self.win_user and not win_pass:
+            try:
+                win_pass = getpass.getpass(
+                    f"[job {self.job_id}] Windows password for {self.win_user}: "
+                ).strip()
+                os.environ["WINDOWS_PASS"] = win_pass
+            except (EOFError, KeyboardInterrupt):
+                win_pass = ""
+        self.win_pass = win_pass
 
     # ── registry helpers ──────────────────────────────────────────────────────
 

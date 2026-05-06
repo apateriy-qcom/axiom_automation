@@ -11,6 +11,7 @@ import re
 import shlex
 import subprocess
 import time
+import getpass
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -192,6 +193,12 @@ def host_connectivity_checks(host: str) -> Dict[str, Any]:
     win_user = os.environ.get("WINDOWS_USER", "").strip()
     win_pass = os.environ.get("WINDOWS_PASS", "").strip()
     win_domain = os.environ.get("WINDOWS_DOMAIN", "").strip()
+    if win_user and not win_pass:
+        try:
+            win_pass = getpass.getpass(f"Windows password for {win_user}: ").strip()
+            os.environ["WINDOWS_PASS"] = win_pass
+        except (EOFError, KeyboardInterrupt):
+            win_pass = ""
     if win_user and win_pass:
         user_spec = f"{win_domain}\\{win_user}%{win_pass}" if win_domain else f"{win_user}%{win_pass}"
         checks["smb_auth"] = run_cmd(
@@ -200,7 +207,7 @@ def host_connectivity_checks(host: str) -> Dict[str, Any]:
     else:
         checks["smb_auth"] = {
             "skipped": True,
-            "reason": "Set WINDOWS_USER and WINDOWS_PASS (optional WINDOWS_DOMAIN) to test authenticated access.",
+            "reason": "WINDOWS_USER not set. Set it in .env or provide at prompt.",
         }
     return checks
 

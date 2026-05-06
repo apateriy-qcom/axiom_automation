@@ -178,6 +178,8 @@ echo $! > tmp/daemon_service.pid
 | `SMTP_PASS` | Gmail app password |
 | `NOTIFY_EMAIL` | Primary recipient (Axiom sends job mails here) |
 | `FORWARD_EMAIL` | Secondary address to forward completion mail to |
+| `WINDOWS_USER` | Windows workspace username (default: `apateriy`) |
+| `WINDOWS_PASS` | Windows password — **not stored in `.env`**, prompted at runtime |
 
 ### Gmail credentials
 - IMAP/SMTP: `imap.gmail.com:993` / `smtp.gmail.com:465` (SSL)

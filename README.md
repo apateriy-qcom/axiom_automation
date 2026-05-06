@@ -284,6 +284,8 @@ SMTP_USER=anurag.pateriya@oss.qualcomm.com
 SMTP_PASS=<gmail-app-password>
 NOTIFY_EMAIL=anurag.pateriya@oss.qualcomm.com
 FORWARD_EMAIL=apateriy@qti.qualcomm.com
+WINDOWS_USER=apateriy
+# WINDOWS_PASS is not stored — agent prompts at runtime
 ```
 
 Gmail credentials are read from `~/.muttrc` (already configured in this workspace).
