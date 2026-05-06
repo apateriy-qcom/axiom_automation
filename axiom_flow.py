@@ -18,6 +18,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+# Auto-register submitted jobs with the completion daemon
+try:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from job_completion_daemon import register_job as _register_job
+except Exception:
+    _register_job = None
+
 
 TERMINAL_JOB_STATES = {
     "Completed",
@@ -249,7 +257,20 @@ def create_job(
 
     if not job_id:
         raise RuntimeError(f"Unable to parse jobId from submit response: {json.dumps(resp)}")
-    return int(job_id)
+    job_id = int(job_id)
+    # Auto-register with the persistent completion daemon
+    if _register_job is not None:
+        try:
+            meta = payload.get("metaBuild", {}).get("path", "")
+            _register_job(
+                job_id=job_id,
+                out_dir=str(out_dir),
+                meta_build=meta,
+                auto_start_daemon=True,
+            )
+        except Exception as _e:
+            print(f"[daemon] register_job warning: {_e}")
+    return job_id
 
 
 def poll_job(

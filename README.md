@@ -158,3 +158,132 @@ Typical artifacts in `--out-dir`:
 
 - No-failure submission workflow: `RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md`
 - Assignment/host/serial watcher: `scripts/watch_job_assignment.py`
+
+## Kernel Taxonomy (APSS/LinuxKernel)
+
+Pre-validated configuration for `/APSS/LinuxKernel` jobs.
+
+### Known-good device
+
+| Field | Value |
+|-------|-------|
+| Serial | `N10RPW017` |
+| Chipset | SM8850 (Kaanapali) |
+| Storage | UFS |
+| Form factor | MTP |
+| Host | `krnltm-axiom-14` |
+| Resource ID | 181840 |
+| Heartbeat | Active (verified 2026-05-06) |
+
+### jobType=Standard
+
+```bash
+python3 axiom_flow.py \
+  --env-file .env \
+  --job-payload-file ./tmp/job_payload.json \
+  --job-mode Standard \
+  --job-type Standard \
+  --out-dir ./tmp
+```
+
+Payload essentials:
+
+```json
+{
+  "team": "/APSS/LinuxKernel",
+  "metaBuild": {
+    "path": "\\\\<server>\\<share>\\<meta>",
+    "storageType": "UFS",
+    "storageLayout": "Auto",
+    "productFlavor": "Auto",
+    "binaryType": "Auto"
+  },
+  "playlistVersionMode": "Custom",
+  "playlists": [{ "id": 251, "revision": 13, "iteration": 1 }],
+  "resource": { "type": "Device", "identifier": "N10RPW017" }
+}
+```
+
+### jobType=DevFarm — Public API limitation
+
+The "Axiom Dev Farm Playlist" (`id=17155`) only has revision 0.
+The public API's `/jobs/submit` rejects revision 0 regardless of `playlistVersionMode`,
+returning `"Invalid playlist with id 17155 and revision 0"`.
+
+**Workaround:** Submit DevFarm jobs via the Axiom UI.
+The payload template is saved at `tmp/job_payload_kaanapali_01181_devfarm.json` for reference.
+
+---
+
+## Job Completion Daemon
+
+A persistent background service that monitors all submitted jobs and forwards
+completion emails automatically.  No per-job setup required.
+
+### How it works
+
+1. `axiom_flow.py` calls `register_job()` after every successful submit — the daemon
+   starts automatically if it is not already running.
+2. A background thread per job polls `GET /jobs/{id}/info` every 60 s until terminal state.
+3. After terminal state, the Gmail INBOX (`anurag.pateriya@oss.qualcomm.com`) is watched
+   for up to 10 min for the Axiom completion email.
+4. The original email is forwarded to `apateriy@qti.qualcomm.com`.
+   If the Axiom email does not arrive in time, a synthetic HTML summary is sent instead.
+5. The job is marked `done` in the registry and never processed again.
+
+### Service files
+
+| File | Purpose |
+|------|---------|
+| `tmp/daemon_service.pid` | PID of the running service |
+| `tmp/daemon_service.log` | Structured log |
+| `tmp/daemon_jobs.json` | Job registry — all jobs and their status |
+| `tmp/job_daemon_<ID>.latest.json` | Latest poll snapshot per job |
+| `tmp/job_daemon_<ID>.final.json` | Final job info at terminal state |
+
+### Manually register a job
+
+Use this when a job was submitted outside `axiom_flow.py` (e.g. via the Axiom UI):
+
+```bash
+python3 scripts/job_completion_daemon.py \
+  --register-job-id <JOB_ID> \
+  --register-forward apateriy@qti.qualcomm.com \
+  --register-notify  anurag.pateriya@oss.qualcomm.com \
+  --env-file .env --out-dir ./tmp
+```
+
+The daemon starts automatically if it is not running.
+
+### Manually start the service
+
+```bash
+setsid python3 scripts/job_completion_daemon.py \
+  --env-file .env --out-dir ./tmp \
+  --poll-interval 60 --poll-timeout 86400 --mail-wait 600 \
+  >> tmp/daemon_service.log 2>&1 &
+echo $! > tmp/daemon_service.pid
+```
+
+### Monitor and control
+
+```bash
+tail -f tmp/daemon_service.log          # live log
+cat tmp/daemon_jobs.json                # registry status
+kill $(cat tmp/daemon_service.pid)      # stop service
+```
+
+### Required .env keys
+
+```
+AXIOM_CLIENT_ID=...
+AXIOM_CLIENT_SECRET=...
+IMAP_USER=anurag.pateriya@oss.qualcomm.com
+IMAP_PASS=<gmail-app-password>
+SMTP_USER=anurag.pateriya@oss.qualcomm.com
+SMTP_PASS=<gmail-app-password>
+NOTIFY_EMAIL=anurag.pateriya@oss.qualcomm.com
+FORWARD_EMAIL=apateriy@qti.qualcomm.com
+```
+
+Gmail credentials are read from `~/.muttrc` (already configured in this workspace).
