@@ -204,12 +204,12 @@ Payload essentials:
 }
 ```
 
-### jobType=DevFarm — recommended over Standard
+### jobType=DevFarm — recommended for all submissions
 
-Use `jobType=DevFarm` with playlist `251` rev `13` instead of `jobType=Standard`.
+Use `jobType=DevFarm` with playlist `251` rev `13` and `ResourcePool` `7818`
+("Kaanapali V2 JTAG"). Axiom picks the next available SM8850 device automatically.
 DevFarm skips CMS content sync from `//depot/MPSS/`, avoiding the `SystemError`
-that occurs when `kernelbaseport` submits with `jobType=Standard` (no Collaborator
-permission on that depot).
+that occurs with `jobType=Standard` for `kernelbaseport`.
 
 ```bash
 python3 axiom_flow.py \
@@ -220,9 +220,15 @@ python3 axiom_flow.py \
   --out-dir ./tmp
 ```
 
-> **Note on playlist 17155** ("Axiom Dev Farm Playlist"): the public API rejects it
-> because it only has revision 0. Use playlist 251 rev 13 — identical outcome for
-> this taxonomy.
+Payload resource block:
+```json
+{ "type": "ResourcePool", "identifier": "7818" }
+```
+
+> **Pool 7818** = "Kaanapali V2 JTAG" — 3 SM8850 devices (`N10RPW017`, `TDC00002CAWB`, `TDC00002CD5V`)
+>
+> **Playlist 17155** ("Axiom Dev Farm Playlist") cannot be used via the public API —
+> revision 0 is hard-rejected server-side. Playlist 251 rev 13 is a drop-in replacement.
 
 ---
 

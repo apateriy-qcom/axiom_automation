@@ -152,6 +152,11 @@ DevFarm skips CMS content sync entirely. Playlist 251 rev 13 works fine with Dev
 The "Axiom Dev Farm Playlist" (id=17155) is NOT required — it is just the default
 playlist other users happen to use. Any valid playlist with revision > 0 works.
 
+### Confirmed working payload for DevFarm + pool (generic resource)
+
+Use `ResourcePool` type with pool id `7818` ("Kaanapali V2 JTAG") so Axiom
+picks the next available SM8850 device automatically.
+
 ### Confirmed working payload for DevFarm + playlist 251
 
 ```json
@@ -166,7 +171,7 @@ playlist other users happen to use. Any valid playlist with revision > 0 works.
   },
   "playlistVersionMode": "Custom",
   "playlists": [{ "id": 251, "revision": 13, "iteration": 1 }],
-  "resource": { "type": "Device", "identifier": "N10RPW017" },
+  "resource": { "type": "ResourcePool", "identifier": "7818" },
   "optional": {
     "buildLoading": "None",
     "emailNotifications": {
@@ -179,12 +184,19 @@ playlist other users happen to use. Any valid playlist with revision > 0 works.
 
 Submit with: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm`
 
-### Why playlist 17155 is NOT needed via public API
+### Why playlist 17155 cannot be used via public API
 
 The "Axiom Dev Farm Playlist" (id=17155) only has revision 0. The public API
-rejects revision 0 on `/jobs/submit` regardless of `playlistVersionMode`.
-All other users submit it via the Axiom UI which bypasses this check.
+rejects revision 0 on `/jobs/submit` regardless of `playlistVersionMode`,
+resource type (Device or ResourcePool), or jobMode. This is a hard server-side
+validation. All other users submit it via the Axiom UI which bypasses this check.
 Use playlist 251 rev 13 with `jobType=DevFarm` instead — identical outcome.
+
+### Pool reference
+
+| Pool ID | Name | Devices | Chipset |
+|---------|------|---------|---------|
+| 7818 | Kaanapali V2 JTAG | N10RPW017, TDC00002CAWB, TDC00002CD5V | SM8850 |
 
 ## Error-to-Fix Matrix
 

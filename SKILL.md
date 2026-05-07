@@ -80,15 +80,16 @@ Use this skill to execute the full Axiom Public API workflow: setup assumptions,
 - storageType: `UFS`
 - Submit: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm` *(recommended — avoids CMS permission error)*
 
-### jobType=DevFarm
-- Use playlist `id=251`, `revision=13`, `iteration=1`, `playlistVersionMode=Custom`
-  (same playlist as Standard — DevFarm skips CMS content sync, so no permission error)
-- Device: `N10RPW017`, `buildLoading=None`, `storageType=UFS`
+### jobType=DevFarm  ← recommended for all submissions
+- Playlist: `id=251`, `revision=13`, `iteration=1`, `playlistVersionMode=Custom`
+- Resource: `type=ResourcePool`, `identifier=7818` ("Kaanapali V2 JTAG" pool)
+  — Axiom picks the next available SM8850 device automatically (3 devices in pool)
+- `buildLoading=None`, `storageType=UFS`
 - Submit: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm`
-- **Do NOT use playlist 17155** ("Axiom Dev Farm Playlist") via public API —
-  it only has revision 0 which the API rejects. Playlist 251 rev 13 works identically.
-- Key difference vs Standard: DevFarm bypasses `//depot/MPSS/` CMS sync entirely,
-  avoiding the `SystemError` that hits `kernelbaseport` with `jobType=Standard`.
+- DevFarm bypasses `//depot/MPSS/` CMS sync → no `SystemError` for `kernelbaseport`
+- **Playlist 17155** ("Axiom Dev Farm Playlist") cannot be used via public API —
+  revision 0 is hard-rejected server-side regardless of resource type or `playlistVersionMode`.
+  Playlist 251 rev 13 is a drop-in replacement with identical behaviour.
 
 ### Meta build path format
 - Pattern: `\\\\<server>\\<share>\\<product>.<branch>-<build_id>`
@@ -109,8 +110,9 @@ Use this skill to execute the full Axiom Public API workflow: setup assumptions,
   },
   "playlistVersionMode": "Custom",
   "playlists": [{ "id": 251, "revision": 13, "iteration": 1 }],
-  "resource": { "type": "Device", "identifier": "N10RPW017" },
+  "resource": { "type": "ResourcePool", "identifier": "7818" },
   "optional": {
+    "buildLoading": "None",
     "emailNotifications": {
       "recipients": ["apateriy@qti.qualcomm.com"],
       "schedule": { "jobStart": true, "jobEnd": true, "buildLoad": false, "resourceConfig": false }
@@ -118,6 +120,7 @@ Use this skill to execute the full Axiom Public API workflow: setup assumptions,
   }
 }
 ```
+> Pool `7818` = "Kaanapali V2 JTAG" — 3 SM8850 devices, Axiom picks next available.
 
 ## Job Completion Daemon  (persistent service)
 
