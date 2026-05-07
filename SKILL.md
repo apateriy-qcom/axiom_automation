@@ -78,16 +78,17 @@ Use this skill to execute the full Axiom Public API workflow: setup assumptions,
 - Known-good playlist: `id=251`, `revision=13`, `iteration=1`, `playlistVersionMode=Custom`
 - Device: `N10RPW017` (SM8850, UFS, MTP, host=`krnltm-axiom-14`, resource id=181840)
 - storageType: `UFS`
-- Submit: `POST /jobs/submit?jobMode=Standard&jobType=Standard`
+- Submit: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm` *(recommended — avoids CMS permission error)*
 
 ### jobType=DevFarm
-- Playlist: `id=17155` ("Axiom Dev Farm Playlist"), `playlistVersionMode=UnpublishedTip`
-- **Public API limitation**: `/jobs/submit` rejects revision 0 for playlist 17155.
-  All DevFarm jobs in this taxonomy must be submitted via the Axiom UI.
-  The public API returns `"Invalid playlist with id 17155 and revision 0"` regardless
-  of `playlistVersionMode`. This is a confirmed server-side validation bug.
-- Device: `N10RPW017` (same as above), `buildLoading=None`, `storageType=UFS`
-- Submit: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm` (UI only for now)
+- Use playlist `id=251`, `revision=13`, `iteration=1`, `playlistVersionMode=Custom`
+  (same playlist as Standard — DevFarm skips CMS content sync, so no permission error)
+- Device: `N10RPW017`, `buildLoading=None`, `storageType=UFS`
+- Submit: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm`
+- **Do NOT use playlist 17155** ("Axiom Dev Farm Playlist") via public API —
+  it only has revision 0 which the API rejects. Playlist 251 rev 13 works identically.
+- Key difference vs Standard: DevFarm bypasses `//depot/MPSS/` CMS sync entirely,
+  avoiding the `SystemError` that hits `kernelbaseport` with `jobType=Standard`.
 
 ### Meta build path format
 - Pattern: `\\\\<server>\\<share>\\<product>.<branch>-<build_id>`

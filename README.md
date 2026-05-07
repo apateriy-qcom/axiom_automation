@@ -204,14 +204,25 @@ Payload essentials:
 }
 ```
 
-### jobType=DevFarm — Public API limitation
+### jobType=DevFarm — recommended over Standard
 
-The "Axiom Dev Farm Playlist" (`id=17155`) only has revision 0.
-The public API's `/jobs/submit` rejects revision 0 regardless of `playlistVersionMode`,
-returning `"Invalid playlist with id 17155 and revision 0"`.
+Use `jobType=DevFarm` with playlist `251` rev `13` instead of `jobType=Standard`.
+DevFarm skips CMS content sync from `//depot/MPSS/`, avoiding the `SystemError`
+that occurs when `kernelbaseport` submits with `jobType=Standard` (no Collaborator
+permission on that depot).
 
-**Workaround:** Submit DevFarm jobs via the Axiom UI.
-The payload template is saved at `tmp/job_payload_kaanapali_01181_devfarm.json` for reference.
+```bash
+python3 axiom_flow.py \
+  --env-file .env \
+  --job-payload-file ./tmp/job_payload.json \
+  --job-mode Standard \
+  --job-type DevFarm \
+  --out-dir ./tmp
+```
+
+> **Note on playlist 17155** ("Axiom Dev Farm Playlist"): the public API rejects it
+> because it only has revision 0. Use playlist 251 rev 13 — identical outcome for
+> this taxonomy.
 
 ---
 

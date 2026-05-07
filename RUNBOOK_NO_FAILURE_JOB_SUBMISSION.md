@@ -140,6 +140,52 @@ Keep these files in `tmp/`:
 - device snapshot used for selection
 - short run report (for mail/share)
 
+## DevFarm jobType — CMS Permission Bypass (Key Finding)
+
+The `SAGA_Sanity` playlist (id=251) triggers a CMS content sync from `//depot/MPSS/`
+when submitted with `jobType=Standard`. The service account `kernelbaseport` lacks
+Collaborator permission on that depot, causing immediate `SystemError`.
+
+**Fix: submit with `jobType=DevFarm` instead of `Standard`.**
+DevFarm skips CMS content sync entirely. Playlist 251 rev 13 works fine with DevFarm.
+
+The "Axiom Dev Farm Playlist" (id=17155) is NOT required — it is just the default
+playlist other users happen to use. Any valid playlist with revision > 0 works.
+
+### Confirmed working payload for DevFarm + playlist 251
+
+```json
+{
+  "team": "/APSS/LinuxKernel",
+  "metaBuild": {
+    "path": "\\\\<server>\\<share>\\<meta>",
+    "storageType": "UFS",
+    "storageLayout": "Auto",
+    "productFlavor": "Auto",
+    "binaryType": "Auto"
+  },
+  "playlistVersionMode": "Custom",
+  "playlists": [{ "id": 251, "revision": 13, "iteration": 1 }],
+  "resource": { "type": "Device", "identifier": "N10RPW017" },
+  "optional": {
+    "buildLoading": "None",
+    "emailNotifications": {
+      "recipients": ["apateriy@qti.qualcomm.com"],
+      "schedule": { "jobStart": true, "jobEnd": true, "buildLoad": false, "resourceConfig": false }
+    }
+  }
+}
+```
+
+Submit with: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm`
+
+### Why playlist 17155 is NOT needed via public API
+
+The "Axiom Dev Farm Playlist" (id=17155) only has revision 0. The public API
+rejects revision 0 on `/jobs/submit` regardless of `playlistVersionMode`.
+All other users submit it via the Axiom UI which bypasses this check.
+Use playlist 251 rev 13 with `jobType=DevFarm` instead — identical outcome.
+
 ## Error-to-Fix Matrix
 
 - `Chipset type mismatch ... supports [...]`
