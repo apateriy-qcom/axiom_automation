@@ -1,266 +1,225 @@
 # Axiom Public API Automation
 
-CLI automation for Qualcomm Axiom Public API.
+CLI automation for the Qualcomm **Axiom Public API** (`https://api-int.qualcomm.com/axiom/v1/public`).
 
-This project is designed for direct use by end users:
-- Initializes ready-to-edit payload templates.
-- Reads credentials from `.env` automatically.
-- Submits a job, polls status, gets logs summary, and optionally creates a coverage report.
-- Saves all responses to an output folder for debugging and traceability.
+Submit a test job, poll it to a terminal state, pull the results/log summary, and
+capture host/device/serial/ADB assignment evidence — all from one command, with every
+request and response saved to an output folder for traceability.
 
-## What This Tool Does
+This README documents only the **verified working path**. Everything here has been run
+end-to-end against the live API.
 
-`axiom_flow.py` can run the following in one command:
-1. Optional permission refresh (`PUT /users/updatepermission`)
-2. Submit a fresh job (`POST /jobs/submit`)
-3. Poll job status (`GET /jobs/{id}/info`)
-4. Fetch job results/log summary (`GET /jobs/{id}/results`)
-5. Optional coverage report creation (`POST /coveragereport`)
-6. Optional report instance creation (`POST /coveragereport/{id}/instances`)
-7. Optional resource lookup (`GET /resources/{id}`)
+---
+
+## Repo layout
+
+```
+axiom_flow.py                     # main CLI: submit -> poll -> results -> connectivity evidence
+scripts/
+  watch_job_assignment.py         # poll a job for assigned host/serial/ADB, test connectivity, email
+  job_completion_daemon.py        # persistent daemon: forward Axiom completion emails per job
+  generate_basic_auth.py          # base64(client_id:client_secret) helper
+  convert_localfile_content.py    # JSON-escape a file's content for localFile.content payloads
+templates/
+  job_payload.kaanapali_kernel.json   # proven /APSS/LinuxKernel DevFarm payload
+  job_payload.sample.json             # generic starter payload (edit for your team)
+  report_payload.sample.json          # coverage-report starter payload
+references/
+  quickstart.md                   # auth flow, headers, guardrails
+  endpoints.md                    # endpoint catalog + query patterns
+RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md  # step-by-step submission runbook + error matrix
+SKILL.md                          # skill manifest / kernel taxonomy quick reference
+legacy/                           # old BAIT wrapper (axiom_launch_and_monitor.py) — not maintained
+```
+
+---
 
 ## Prerequisites
 
-- Python 3.9+
-- Axiom service account with correct taxonomy permissions
-- Access to `https://api-int.qualcomm.com`
+- Python 3.9+ (standard library only — no `pip install` needed)
+- An Axiom service account with the right taxonomy permission:
+  - `View` for read endpoints (GET)
+  - `Execute` for write endpoints (POST/PUT — e.g. job submit)
+- Network access to `https://api-int.qualcomm.com`
 
-## Quick Start (Plug and Play)
+---
 
-### 1. Create your env file
+## 1. Configure credentials
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
-- `AXIOM_CLIENT_ID`
-- `AXIOM_CLIENT_SECRET`
+Edit `.env`:
 
-Optional:
-- `AXIOM_ACCESS_TOKEN` (if you already have a token)
+```
+AXIOM_CLIENT_ID=your_client_id
+AXIOM_CLIENT_SECRET=your_client_secret
+```
 
-Note:
-- The script always requests a fresh token using client credentials on every run.
-- Shell environment variables override values from `.env`.
+A fresh OAuth token is minted from these on **every** run (TTL ~1 hour). Shell
+environment variables override `.env`. The full set of optional keys (email/daemon
+config) is documented in [Job completion daemon](#job-completion-daemon).
 
-### 2. Generate starter payloads
+---
+
+## 2. Submit a job
+
+`axiom_flow.py` reads a payload JSON, submits it, polls to a terminal state, fetches the
+results summary, and writes a connectivity-evidence file. All artifacts land in `--out-dir`.
+
+### Quick start (generic)
 
 ```bash
+# Create starter payloads in ./tmp
 python3 axiom_flow.py --init-samples --out-dir ./tmp
-```
 
-This creates:
-- `./tmp/job_payload.json`
-- `./tmp/report_payload.json`
+# Edit ./tmp/job_payload.json: team, metaBuild.path, playlists[].id, resource.identifier
 
-### 3. Edit payloads with your real values
-
-At minimum, update these in `./tmp/job_payload.json`:
-- `team`
-- `metaBuild.path`
-- `playlists[].id`
-- `resource.identifier`
-
-Update `./tmp/report_payload.json` only if you plan to create a coverage report.
-
-### 4. Run job flow
-
-```bash
-python3 axiom_flow.py \
-  --out-dir ./tmp \
-  --job-mode Standard \
-  --job-type Standard \
-  --poll-interval 10 \
-  --poll-timeout 900 \
-  --resource-id 11
-```
-
-Because `./tmp/job_payload.json` exists, `--job-payload-file` is optional after initialization.
-
-### 5. (Optional) Run with report creation
-
-```bash
-python3 axiom_flow.py \
-  --out-dir ./tmp \
-  --job-mode Standard \
-  --job-type Standard \
-  --job-payload-file ./tmp/job_payload.json \
-  --report-payload-file ./tmp/report_payload.json \
-  --create-report-instance
-```
-
-## Authentication
-
-Fresh OAuth token is minted on every run using client credentials:
-- CLI: `--client-id ... --client-secret ...`
-- Env: `AXIOM_CLIENT_ID`, `AXIOM_CLIENT_SECRET`
-
-## Common Commands
-
-Initialize templates (safe, no overwrite):
-```bash
-python3 axiom_flow.py --init-samples --out-dir ./tmp
-```
-
-Initialize and overwrite existing templates:
-```bash
-python3 axiom_flow.py --init-samples --force-init-samples --out-dir ./tmp
-```
-
-Refresh permissions before main flow:
-```bash
-python3 axiom_flow.py --refresh-permissions --out-dir ./tmp
-```
-
-Use custom env file:
-```bash
-python3 axiom_flow.py --env-file ./my.env --out-dir ./tmp
-```
-
-## Output Files
-
-Typical artifacts in `--out-dir`:
-- `run_summary.json`
-- `job_submit_payload.json`
-- `job_submit_response.json`
-- `job_info_poll_*.json`
-- `job_info_final.json`
-- `job_results_page_0.json`
-- `job_logs_summary.json`
-- `connectivity_evidence.json` (host/device/serial/adb-port evidence summary from payload + results)
-- `coveragereport_create_response.json` (if report enabled)
-- `coveragereport_instance_response.json` (if report instance enabled)
-- `resource_by_id_response.json` (if `--resource-id` is provided)
-
-## Troubleshooting
-
-- `Missing --job-payload-file`:
-  - Run `--init-samples`, edit `./tmp/job_payload.json`, rerun.
-
-- Token/auth errors:
-  - Verify `AXIOM_CLIENT_ID` and `AXIOM_CLIENT_SECRET`.
-  - Ensure account is allowed to fetch tokens.
-
-- Write endpoint failures (submit/report):
-  - Confirm taxonomy `Execute` permission.
-  - If permissions were recently updated, rerun with `--refresh-permissions`.
-
-- Job/read not immediately visible after submit:
-  - The script already handles transient post-submit visibility delay.
-
-## Security
-
-- Do not commit `.env`, tokens, or secrets.
-- Keep outputs in `tmp/` (already ignored by git).
-
-## Runbook
-
-- No-failure submission workflow: `RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md`
-- Assignment/host/serial watcher: `scripts/watch_job_assignment.py`
-
-## Kernel Taxonomy (APSS/LinuxKernel)
-
-Pre-validated configuration for `/APSS/LinuxKernel` jobs.
-
-### Known-good device
-
-| Field | Value |
-|-------|-------|
-| Serial | `N10RPW017` |
-| Chipset | SM8850 (Kaanapali) |
-| Storage | UFS |
-| Form factor | MTP |
-| Host | `krnltm-axiom-14` |
-| Resource ID | 181840 |
-| Heartbeat | Active (verified 2026-05-06) |
-
-### jobType=Standard
-
-```bash
 python3 axiom_flow.py \
   --env-file .env \
   --job-payload-file ./tmp/job_payload.json \
   --job-mode Standard \
   --job-type Standard \
+  --poll-interval 15 \
+  --poll-timeout 900 \
   --out-dir ./tmp
 ```
 
-Payload essentials:
+### Kernel (Kaanapali / `/APSS/LinuxKernel`) — proven path
+
+Use `jobType=DevFarm` with `ResourcePool 7818` ("Kaanapali V2 JTAG", 3× SM8850
+devices). DevFarm skips the CMS content sync from `//depot/MPSS/`, which avoids the
+`SystemError` that `jobType=Standard` hits for `kernelbaseport`.
+
+```bash
+python3 axiom_flow.py \
+  --env-file .env \
+  --job-payload-file ./templates/job_payload.kaanapali_kernel.json \
+  --job-mode Standard \
+  --job-type DevFarm \
+  --poll-interval 15 \
+  --poll-timeout 180 \
+  --out-dir ./tmp
+```
+
+Proven payload (`templates/job_payload.kaanapali_kernel.json`):
 
 ```json
 {
   "team": "/APSS/LinuxKernel",
   "metaBuild": {
-    "path": "\\\\<server>\\<share>\\<meta>",
+    "path": "\\\\crmhyd\\nsid-hyd-06\\Kaanapali.LA.1.0-01181-STD.TM-1",
     "storageType": "UFS",
     "storageLayout": "Auto",
     "productFlavor": "Auto",
     "binaryType": "Auto"
   },
-  "playlistVersionMode": "Custom",
-  "playlists": [{ "id": 251, "revision": 13, "iteration": 1 }],
-  "resource": { "type": "Device", "identifier": "N10RPW017" }
+  "playlistVersionMode": "LastPublished",
+  "playlists": [{ "id": 17155, "iteration": 1 }],
+  "resource": { "type": "ResourcePool", "identifier": "7818" },
+  "optional": {
+    "buildLoading": "None",
+    "emailNotifications": {
+      "recipients": ["apateriy@qti.qualcomm.com"],
+      "schedule": { "jobStart": true, "jobEnd": true, "buildLoad": false, "resourceConfig": false }
+    }
+  }
 }
 ```
 
-### jobType=DevFarm — recommended for all submissions
+**Playlist notes (verified 2026-06-23):**
 
-Use `jobType=DevFarm` with playlist `251` rev `13` and `ResourcePool` `7818`
-("Kaanapali V2 JTAG"). Axiom picks the next available SM8850 device automatically.
-DevFarm skips CMS content sync from `//depot/MPSS/`, avoiding the `SystemError`
-that occurs with `jobType=Standard` for `kernelbaseport`.
+- Playlist **17155** ("Axiom Dev Farm Playlist") **works** via the public API. It only
+  has revision 0, so submit with `playlistVersionMode=LastPublished` (or `UnpublishedTip`)
+  and **omit the `revision` field**. Passing an explicit `"revision": 0` is what the server
+  rejects with `400 Invalid playlist with id 17155 and revision 0`.
+- Playlist **251 rev 13** also works (`playlistVersionMode=Custom`,
+  `playlists:[{"id":251,"revision":13,"iteration":1}]`) and is a drop-in alternative.
+- Never submit `revision: 0` explicitly, and `playlistVersionMode=Latest` is not a valid value.
 
-```bash
-python3 axiom_flow.py \
-  --env-file .env \
-  --job-payload-file ./tmp/job_payload.json \
-  --job-mode Standard \
-  --job-type DevFarm \
-  --out-dir ./tmp
-```
+### Pool / device reference
 
-Payload resource block:
-```json
-{ "type": "ResourcePool", "identifier": "7818" }
-```
+| Pool ID | Name | Devices | Chipset |
+|---------|------|---------|---------|
+| 7818 | Kaanapali V2 JTAG | `N10RPW017`, `TDC00002CAWB`, `TDC00002CD5V` | SM8850 |
 
-> **Pool 7818** = "Kaanapali V2 JTAG" — 3 SM8850 devices (`N10RPW017`, `TDC00002CAWB`, `TDC00002CD5V`)
->
-> **Playlist 17155** ("Axiom Dev Farm Playlist") cannot be used via the public API —
-> revision 0 is hard-rejected server-side. Playlist 251 rev 13 is a drop-in replacement.
+To target one device directly instead of the pool, use
+`"resource": { "type": "Device", "identifier": "N10RPW017" }`.
 
 ---
 
-## Job Completion Daemon
+## 3. Get the assigned host / serial / ADB
 
-A persistent background service that monitors all submitted jobs and forwards
-completion emails automatically.  No per-job setup required.
+A freshly submitted job sits in `Submitted` with no host yet. Watch it until Axiom assigns
+a device, then capture host + serial + ADB and test workspace connectivity:
 
-### How it works
+```bash
+python3 scripts/watch_job_assignment.py \
+  --job-id <JOB_ID> \
+  --notify-email apateriy@qti.qualcomm.com \
+  --poll-interval 30 \
+  --max-wait 21600 \
+  --out-dir ./tmp
+```
 
-1. `axiom_flow.py` calls `register_job()` after every successful submit — the daemon
-   starts automatically if it is not already running.
-2. A background thread per job polls `GET /jobs/{id}/info` every 60 s until terminal state.
-3. After terminal state, the Gmail INBOX (`anurag.pateriya@oss.qualcomm.com`) is watched
-   for up to 10 min for the Axiom completion email.
-4. The original email is forwarded to `apateriy@qti.qualcomm.com`.
-   If the Axiom email does not arrive in time, a synthetic HTML summary is sent instead.
-5. The job is marked `done` in the registry and never processed again.
+It polls `/jobs/{id}/info` + `/jobs/{id}/results`, extracts the assigned host/resource,
+runs ping / RDP-3389 / SMB-445 checks (and authenticated SMB if `WINDOWS_USER`/`WINDOWS_PASS`
+are set), looks up `serialNumber`/`adbId` via `/resources/{id}` (pass `--resource-id`), and
+emails on assignment / ADB detection. Outputs:
 
-### Service files
+- `tmp/job_watch_<JOB_ID>.latest.json` — JSON snapshot
+- `tmp/job_watch_<JOB_ID>.report.md` — Markdown step report
+
+---
+
+## Output artifacts (`--out-dir`)
 
 | File | Purpose |
 |------|---------|
-| `tmp/daemon_service.pid` | PID of the running service |
-| `tmp/daemon_service.log` | Structured log |
-| `tmp/daemon_jobs.json` | Job registry — all jobs and their status |
-| `tmp/job_daemon_<ID>.latest.json` | Latest poll snapshot per job |
-| `tmp/job_daemon_<ID>.final.json` | Final job info at terminal state |
+| `run_summary.json` | Top-level run summary |
+| `job_submit_payload.json` / `job_submit_response.json` | Exact submit request/response |
+| `job_info_poll_*.json` / `job_info_final.json` | Status polls + final state |
+| `job_results_page_0.json` / `job_logs_summary.json` | Results page + log-link summary |
+| `connectivity_evidence.json` | Host / device / serial / ADB evidence derived from payload + results |
+| `coveragereport_*` | Coverage report responses (only with `--report-payload-file`) |
+| `resource_by_id_response.json` | Resource lookup (only with `--resource-id`) |
 
-### Manually register a job
+---
 
-Use this when a job was submitted outside `axiom_flow.py` (e.g. via the Axiom UI):
+## Optional flows
+
+Refresh taxonomy permissions before submitting (run after QGroup/entitlement changes):
+
+```bash
+python3 axiom_flow.py --refresh-permissions --job-payload-file ./tmp/job_payload.json --out-dir ./tmp
+```
+
+Create a coverage report after the job:
+
+```bash
+python3 axiom_flow.py \
+  --job-payload-file ./tmp/job_payload.json \
+  --report-payload-file ./tmp/report_payload.json \
+  --create-report-instance \
+  --out-dir ./tmp
+```
+
+Look up a resource by ID (enriches the run with serial/host/quarantine state):
+
+```bash
+python3 axiom_flow.py --job-payload-file ./tmp/job_payload.json --resource-id 181840 --out-dir ./tmp
+```
+
+---
+
+## Job completion daemon
+
+`scripts/job_completion_daemon.py` is a single persistent process that monitors all
+submitted jobs and forwards their Axiom completion emails. `axiom_flow.py` auto-registers
+each submitted job and starts the daemon if it is not already running — no per-job setup.
+
+Manually register a job submitted elsewhere (e.g. the Axiom UI):
 
 ```bash
 python3 scripts/job_completion_daemon.py \
@@ -270,39 +229,45 @@ python3 scripts/job_completion_daemon.py \
   --env-file .env --out-dir ./tmp
 ```
 
-The daemon starts automatically if it is not running.
-
-### Manually start the service
+Control / inspect:
 
 ```bash
-setsid python3 scripts/job_completion_daemon.py \
-  --env-file .env --out-dir ./tmp \
-  --poll-interval 60 --poll-timeout 86400 --mail-wait 600 \
-  >> tmp/daemon_service.log 2>&1 &
-echo $! > tmp/daemon_service.pid
+tail -f tmp/daemon_service.log      # live log
+cat tmp/daemon_jobs.json            # job registry + status (pending -> watching -> done|error)
+kill $(cat tmp/daemon_service.pid)  # stop the service
 ```
 
-### Monitor and control
+`.env` keys used by the daemon:
 
-```bash
-tail -f tmp/daemon_service.log          # live log
-cat tmp/daemon_jobs.json                # registry status
-kill $(cat tmp/daemon_service.pid)      # stop service
-```
+| Key | Purpose |
+|-----|---------|
+| `AXIOM_CLIENT_ID` / `AXIOM_CLIENT_SECRET` | OAuth credentials |
+| `IMAP_USER` / `IMAP_PASS` | Gmail account to watch (IMAP `imap.gmail.com:993`) |
+| `SMTP_USER` / `SMTP_PASS` | Gmail account to send from (SMTP `smtp.gmail.com:465`) |
+| `NOTIFY_EMAIL` | Address Axiom sends job mail to |
+| `FORWARD_EMAIL` | Address to forward completion mail to |
+| `WINDOWS_USER` | Windows host user for SMB/RDP checks (`WINDOWS_PASS` is prompted at runtime, never stored) |
 
-### Required .env keys
+---
 
-```
-AXIOM_CLIENT_ID=...
-AXIOM_CLIENT_SECRET=...
-IMAP_USER=anurag.pateriya@oss.qualcomm.com
-IMAP_PASS=<gmail-app-password>
-SMTP_USER=anurag.pateriya@oss.qualcomm.com
-SMTP_PASS=<gmail-app-password>
-NOTIFY_EMAIL=anurag.pateriya@oss.qualcomm.com
-FORWARD_EMAIL=apateriy@qti.qualcomm.com
-WINDOWS_USER=apateriy
-# WINDOWS_PASS is not stored — agent prompts at runtime
-```
+## Troubleshooting
 
-Gmail credentials are read from `~/.muttrc` (already configured in this workspace).
+| Symptom | Fix |
+|---------|-----|
+| `Missing --job-payload-file` | Run `--init-samples`, edit `./tmp/job_payload.json`, rerun |
+| `401` | Token expired/invalid — credentials are re-minted each run; verify `AXIOM_CLIENT_ID`/`SECRET` |
+| `403` on submit | Missing `Execute` permission on the taxonomy; run `--refresh-permissions` |
+| `400 Invalid playlist ... revision 0` | Don't pass explicit `revision: 0`; use `LastPublished` and omit `revision` |
+| `400 Chipset type mismatch ... supports [...]` | Pick a device/pool whose chipset is in the supported list |
+| `SystemError` for `kernelbaseport` with `jobType=Standard` | Submit kernel jobs with `jobType=DevFarm` |
+| Job `/info` 404 right after submit | Transient replication delay — `axiom_flow.py` already retries within a grace window |
+
+See [`RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md`](RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md) for the
+full submission workflow and [`references/`](references/) for the auth flow and endpoint catalog.
+
+---
+
+## Security
+
+- `.env`, `tmp/`, and `__pycache__/` are git-ignored. Never commit credentials or tokens.
+- `WINDOWS_PASS` is intentionally never written to `.env` — it is prompted at runtime.

@@ -87,9 +87,10 @@ Use this skill to execute the full Axiom Public API workflow: setup assumptions,
 - `buildLoading=None`, `storageType=UFS`
 - Submit: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm`
 - DevFarm bypasses `//depot/MPSS/` CMS sync → no `SystemError` for `kernelbaseport`
-- **Playlist 17155** ("Axiom Dev Farm Playlist") cannot be used via public API —
-  revision 0 is hard-rejected server-side regardless of resource type or `playlistVersionMode`.
-  Playlist 251 rev 13 is a drop-in replacement with identical behaviour.
+- **Playlist 17155** ("Axiom Dev Farm Playlist", revision 0 only) **works** via the public
+  API. Submit with `playlistVersionMode=LastPublished` and omit the `revision` field
+  (`playlists:[{"id":17155,"iteration":1}]`). Passing an explicit `"revision":0` is what the
+  server rejects. Playlist 251 rev 13 also works. (Verified 2026-06-23.)
 
 ### Meta build path format
 - Pattern: `\\\\<server>\\<share>\\<product>.<branch>-<build_id>`

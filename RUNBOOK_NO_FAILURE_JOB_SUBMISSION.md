@@ -184,13 +184,25 @@ picks the next available SM8850 device automatically.
 
 Submit with: `POST /jobs/submit?jobMode=Standard&jobType=DevFarm`
 
-### Why playlist 17155 cannot be used via public API
+### Playlist 17155 via public API (corrected 2026-06-23)
 
-The "Axiom Dev Farm Playlist" (id=17155) only has revision 0. The public API
-rejects revision 0 on `/jobs/submit` regardless of `playlistVersionMode`,
-resource type (Device or ResourcePool), or jobMode. This is a hard server-side
-validation. All other users submit it via the Axiom UI which bypasses this check.
-Use playlist 251 rev 13 with `jobType=DevFarm` instead — identical outcome.
+The "Axiom Dev Farm Playlist" (id=17155) only has revision 0 (taxonomy
+`/Product/SAGA`). It **can** be submitted via the public API — the earlier claim
+that it was hard-rejected was wrong. The real cause of the old 400 was passing
+`"revision": 0` explicitly together with `playlistVersionMode=UnpublishedTip`.
+
+Working combinations (all returned 200 + jobId, product `Kaanapali.LA.1.0`):
+
+- `playlistVersionMode=LastPublished`, `playlists:[{"id":17155,"iteration":1}]` (omit revision) — recommended
+- `playlistVersionMode=UnpublishedTip`, `playlists:[{"id":17155,"iteration":1}]` (omit revision)
+- `playlistVersionMode=Custom`, `playlists:[{"id":17155,"revision":0,"iteration":1}]`
+
+Rejected:
+
+- `playlistVersionMode=UnpublishedTip` **with** explicit `"revision":0` → `400 Invalid playlist with id 17155 and revision 0`
+- `playlistVersionMode=Latest` → `400` (not a valid enum value)
+
+Playlist 251 rev 13 remains a fine alternative, but 17155 is no longer blocked.
 
 ### Pool reference
 

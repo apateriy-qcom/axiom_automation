@@ -1,0 +1,20 @@
+{
+  "team": "/APSS/LinuxKernel",
+  "metaBuild": {
+    "path": "\\\\crmhyd\\nsid-hyd-06\\Kaanapali.LA.1.0-01181-STD.TM-1",
+    "storageType": "UFS",
+    "storageLayout": "Auto",
+    "productFlavor": "Auto",
+    "binaryType": "Auto"
+  },
+  "playlistVersionMode": "LastPublished",
+  "playlists": [{ "id": 17155, "iteration": 1 }],
+  "resource": { "type": "ResourcePool", "identifier": "7818" },
+  "optional": {
+    "buildLoading": "None",
+    "emailNotifications": {
+      "recipients": ["apateriy@qti.qualcomm.com"],
+      "schedule": { "jobStart": true, "jobEnd": true, "buildLoad": false, "resourceConfig": false }
+    }
+  }
+}
