@@ -17,6 +17,7 @@ end-to-end against the live API.
 axiom_flow.py                     # main CLI: submit -> poll -> results -> connectivity evidence
 scripts/
   watch_job_assignment.py         # poll a job for assigned host/serial/ADB, test connectivity, email
+  select_device.py                # pick a live, chipset-matching device for a meta (auto device selection)
   job_completion_daemon.py        # persistent daemon: forward Axiom completion emails per job
   generate_basic_auth.py          # base64(client_id:client_secret) helper
   convert_localfile_content.py    # JSON-escape a file's content for localFile.content payloads
@@ -88,9 +89,10 @@ python3 axiom_flow.py \
 
 ### Kernel (Kaanapali / `/APSS/LinuxKernel`) — proven path
 
-Use `jobType=DevFarm` with `ResourcePool 7818` ("Kaanapali V2 JTAG", 3× SM8850
-devices). DevFarm skips the CMS content sync from `//depot/MPSS/`, which avoids the
-`SystemError` that `jobType=Standard` hits for `kernelbaseport`.
+Use `jobType=DevFarm` (skips the CMS content sync from `//depot/MPSS/`, which avoids the
+`SystemError` that `jobType=Standard` hits for `kernelbaseport`), and let the tool pick the
+device for you with **`--auto-select-device`** so you never submit against a dead pool or a
+stale serial:
 
 ```bash
 python3 axiom_flow.py \
@@ -98,10 +100,15 @@ python3 axiom_flow.py \
   --job-payload-file ./templates/job_payload.kaanapali_kernel.json \
   --job-mode Standard \
   --job-type DevFarm \
+  --auto-select-device \
   --poll-interval 15 \
   --poll-timeout 180 \
   --out-dir ./tmp
 ```
+
+`--auto-select-device` rewrites the payload's `resource` block to a live, chipset-matching
+device before submit (see [Automatic device selection](#automatic-device-selection)). Drop
+the flag to submit the payload's `resource` block verbatim.
 
 Proven payload (`templates/job_payload.kaanapali_kernel.json`):
 
@@ -144,8 +151,56 @@ Proven payload (`templates/job_payload.kaanapali_kernel.json`):
 |---------|------|---------|---------|
 | 7818 | Kaanapali V2 JTAG | `N10RPW017`, `TDC00002CAWB`, `TDC00002CD5V` | SM8850 |
 
+> ⚠️ **Prefer `type: Device` over `type: ResourcePool`.** Pool 7818 is unreliable: 2 of its
+> 3 devices are long-dead (stale heartbeat), and the one live device (`N10RPW017`) is flagged
+> `Manual`, which the pool scheduler will not auto-allocate — so `ResourcePool` jobs sit in
+> `Submitted` forever while everyone else's `type: Device` jobs for the same hardware run fine.
+> Pin a **currently-live, chipset-matching** serial instead:
+>
+> ```json
+> "resource": { "type": "Device", "identifier": "N10RPW017" }
+> ```
+>
+> `Kaanapali.LA.1.0` builds require an **SM8850** device. As of 2026-06-23 the only live SM8850
+> device is `N10RPW017` (id 181840, host `krnltm-axiom-14`); other live kernel-lab devices are
+> SM8975 and will reject a Kaanapali meta with a chipset mismatch.
+
 To target one device directly instead of the pool, use
 `"resource": { "type": "Device", "identifier": "N10RPW017" }`.
+
+### Automatic device selection
+
+Rather than hand-picking a serial, pass `--auto-select-device` to `axiom_flow.py` (or run
+`scripts/select_device.py` standalone). It picks a live, chipset-matching device for the
+meta and rewrites the `resource` block before submit. This is the durable fix for the
+dead-pool / stale-serial trap above.
+
+**How it resolves the chipset (no meta→chipset API exists):** it scans recent jobs in the
+same taxonomy for ones that ran the same `softwareProduct` (parsed from `metaBuild.path`,
+e.g. `Kaanapali.LA.1.0`) and actually got a device (`started != null`), then reads the
+chipset of the device those jobs used. That chipset becomes the requirement.
+
+**Selection rule:** among `type: Device` resources in the taxonomy, keep those that match the
+chipset, are not quarantined, and have a fresh heartbeat (`< --heartbeat-max-age`, default
+1800 s). Devices whose `note` flags them `Manual`/offline are skipped **unless** they
+demonstrably ran the product within the lookback window (the `Manual` flag only blocks the
+*pool* scheduler, not a direct `type: Device` request). Remaining devices are ranked by
+freshest heartbeat, tie-broken toward serials seen in recent successful jobs.
+
+Standalone (inspect or rewrite a payload without submitting):
+
+```bash
+# Print the chosen device (default) + ranked candidates; writes tmp/device_selection.json
+python3 scripts/select_device.py --job-payload-file ./tmp/job_payload.json --out-dir ./tmp
+
+# Rewrite the payload's resource block in place (backs up to <payload>.bak)
+python3 scripts/select_device.py --job-payload-file ./tmp/job_payload.json --write-back
+```
+
+Flags (shared with `axiom_flow.py`): `--device-lookback-days` (default 7),
+`--heartbeat-max-age` (default 1800). If no chipset can be resolved (no recent comparable
+job) or no live device matches, selection **fails loudly** and submission is aborted — it
+never silently falls back to the payload's existing pool/serial.
 
 ---
 
@@ -170,6 +225,17 @@ emails on assignment / ADB detection. Outputs:
 
 - `tmp/job_watch_<JOB_ID>.latest.json` — JSON snapshot
 - `tmp/job_watch_<JOB_ID>.report.md` — Markdown step report
+
+**Email notification:** on first assignment the watcher emails the recipient. Delivery uses
+**Gmail SMTP** (`SMTP_USER`/`SMTP_PASS` from `.env` — the same reliable path as the
+completion daemon), falling back to the local `mail` CLI only if SMTP is unconfigured.
+If `--notify-email` is omitted it defaults to `NOTIFY_EMAIL` from `.env`. Pass it explicitly
+to override:
+
+```bash
+python3 scripts/watch_job_assignment.py --job-id <JOB_ID> \
+  --notify-email apateriy@qti.qualcomm.com --poll-interval 30 --max-wait 21600 --out-dir ./tmp
+```
 
 ---
 
@@ -261,6 +327,10 @@ kill $(cat tmp/daemon_service.pid)  # stop the service
 | `400 Chipset type mismatch ... supports [...]` | Pick a device/pool whose chipset is in the supported list |
 | `SystemError` for `kernelbaseport` with `jobType=Standard` | Submit kernel jobs with `jobType=DevFarm` |
 | Job `/info` 404 right after submit | Transient replication delay — `axiom_flow.py` already retries within a grace window |
+| `ResourcePool` job stuck in `Submitted`, never assigned | Pool device is dead/`Manual`. Resubmit with `type: Device` pinned to a live, chipset-matching serial |
+
+**Aborting jobs:** `POST /jobs/abort` with body `{"jobIds": [<id>, ...]}` (the per-job
+`/jobs/{id}/abort` path does **not** exist on the public API and returns 404).
 
 See [`RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md`](RUNBOOK_NO_FAILURE_JOB_SUBMISSION.md) for the
 full submission workflow and [`references/`](references/) for the auth flow and endpoint catalog.

@@ -26,6 +26,20 @@ try:
 except Exception:
     _register_job = None
 
+# Optional meta-based device selection (scripts/select_device.py)
+try:
+    import sys as _sys2
+    _sys2.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
+    from select_device import (
+        product_from_meta as _product_from_meta,
+        recent_successful_serials as _recent_successful_serials,
+        index_devices_by_serial as _index_devices_by_serial,
+        resolve_required_chipset as _resolve_required_chipset,
+        rank_devices as _rank_devices,
+    )
+except Exception:
+    _product_from_meta = None
+
 
 TERMINAL_JOB_STATES = {
     "Completed",
@@ -100,6 +114,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--job-mode", default="Standard")
     parser.add_argument("--job-type", default="Standard")
+    parser.add_argument(
+        "--auto-select-device",
+        action="store_true",
+        help="Pick a live, chipset-matching device for the meta and override the payload's "
+        "resource block before submit (uses scripts/select_device.py).",
+    )
+    parser.add_argument(
+        "--device-lookback-days",
+        type=int,
+        default=7,
+        help="With --auto-select-device: how far back to scan jobs to learn the meta's chipset.",
+    )
+    parser.add_argument(
+        "--heartbeat-max-age",
+        type=int,
+        default=1800,
+        help="With --auto-select-device: max device heartbeat age in seconds (default 1800).",
+    )
     parser.add_argument("--poll-interval", type=int, default=10)
     parser.add_argument("--poll-timeout", type=int, default=900)
     parser.add_argument(
@@ -236,10 +268,59 @@ def common_headers(args: argparse.Namespace, token: str) -> Dict[str, str]:
     }
 
 
+def auto_select_device(
+    args: argparse.Namespace, base_url: str, headers: Dict[str, str], payload: Dict[str, Any]
+) -> None:
+    """Override payload['resource'] with a live, chipset-matching device for the meta.
+
+    Raises RuntimeError (aborting submit) if no suitable device is found — surfacing
+    the problem is the point; we never silently fall back to the payload's resource.
+    """
+    if _product_from_meta is None:
+        raise RuntimeError("--auto-select-device requires scripts/select_device.py (import failed)")
+
+    taxonomy = payload.get("team")
+    meta_path = (payload.get("metaBuild") or {}).get("path", "")
+    product = _product_from_meta(meta_path)
+    if not taxonomy or not product:
+        raise RuntimeError(
+            f"--auto-select-device could not derive taxonomy/product (taxonomy={taxonomy}, product={product})"
+        )
+
+    serials = _recent_successful_serials(base_url, headers, taxonomy, product, args.device_lookback_days)
+    device_index = _index_devices_by_serial(base_url, headers, taxonomy)
+    required_chipset = _resolve_required_chipset(serials, device_index)
+    if not required_chipset:
+        raise RuntimeError(
+            f"--auto-select-device could not resolve a chipset for '{product}': no recent "
+            f"successful job in the last {args.device_lookback_days} day(s). "
+            f"Increase --device-lookback-days or set resource manually."
+        )
+
+    eligible, rejected = _rank_devices(device_index, required_chipset, args.heartbeat_max_age, serials)
+    if not eligible:
+        same_chip = [r for r in rejected if r.get("chipset") == required_chipset]
+        detail = "; ".join(f"{r['serial']}: {r['reason']}" for r in same_chip[:6]) or "none of that chipset"
+        raise RuntimeError(
+            f"--auto-select-device found chipset {required_chipset} for '{product}' but no live "
+            f"device available. Rejected: {detail}"
+        )
+
+    chosen = eligible[0]["serial"]
+    payload["resource"] = {"type": "Device", "identifier": chosen}
+    print(
+        f"[auto-select] product={product} chipset={required_chipset} "
+        f"-> resource={{'type':'Device','identifier':'{chosen}'}} "
+        f"(host={eligible[0]['hostname']}, hb_age={eligible[0]['heartbeat_age_s']}s)"
+    )
+
+
 def create_job(
     args: argparse.Namespace, base_url: str, headers: Dict[str, str], out_dir: Path
 ) -> int:
     payload = read_json(args.job_payload_file)
+    if args.auto_select_device:
+        auto_select_device(args, base_url, headers, payload)
     write_json(out_dir / "job_submit_payload.json", payload)
 
     qs = urlencode({"jobMode": args.job_mode, "jobType": args.job_type})
@@ -568,7 +649,9 @@ def main() -> int:
     logs = fetch_results_logs(job_id, args, base_url, headers, out_dir)
     summary["logs"] = logs
     results_page = read_json(str(out_dir / "job_results_page_0.json"))
-    evidence = build_connectivity_evidence(args.job_payload_file, final_info, results_page)
+    # Use the effective submitted payload (reflects --auto-select-device override).
+    effective_payload_file = str(out_dir / "job_submit_payload.json")
+    evidence = build_connectivity_evidence(effective_payload_file, final_info, results_page)
     write_json(out_dir / "connectivity_evidence.json", evidence)
     summary["connectivity_evidence"] = evidence
 

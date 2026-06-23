@@ -9,10 +9,14 @@ import json
 import os
 import re
 import shlex
+import smtplib
+import ssl
 import subprocess
 import time
 import getpass
 import uuid
+from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
@@ -212,20 +216,55 @@ def host_connectivity_checks(host: str) -> Dict[str, Any]:
     return checks
 
 
+def _send_via_smtp(recipients: List[str], subject: str, body: str) -> Dict[str, Any]:
+    """Send mail via Gmail SMTP_SSL using SMTP_USER/SMTP_PASS from env.
+
+    This is the reliable delivery path to corp addresses (same mechanism the
+    job_completion_daemon uses). Returns a result dict; never raises.
+    """
+    smtp_user = os.environ.get("SMTP_USER", "").strip()
+    smtp_pass = os.environ.get("SMTP_PASS", "").strip()
+    if not smtp_user or not smtp_pass:
+        return {"sent": False, "reason": "SMTP_USER/SMTP_PASS not set"}
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["From"] = smtp_user
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = subject
+    msg["Message-ID"] = make_msgid()
+    msg["Date"] = formatdate(localtime=True)
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=30) as s:
+            s.login(smtp_user, smtp_pass)
+            s.sendmail(smtp_user, recipients, msg.as_bytes())
+        return {"sent": True, "via": "smtp", "recipients": recipients}
+    except Exception as exc:
+        return {"sent": False, "via": "smtp", "reason": str(exc)}
+
+
 def try_send_mail(recipients: List[str], subject: str, body: str) -> Dict[str, Any]:
     if not recipients:
         return {"sent": False, "reason": "no recipients"}
+
+    # Prefer Gmail SMTP (reliable to corp addresses); fall back to the mail CLI.
+    smtp_result = _send_via_smtp(recipients, subject, body)
+    if smtp_result.get("sent"):
+        return smtp_result
+
     cmd = ["mail", "-s", subject, ",".join(recipients)]
     try:
         proc = subprocess.run(cmd, input=body, text=True, capture_output=True, check=False, timeout=15)
     except FileNotFoundError:
-        return {"sent": False, "reason": "mail command not found"}
+        return {"sent": False, "reason": "mail command not found", "smtp": smtp_result}
     except subprocess.TimeoutExpired:
-        return {"sent": False, "reason": "mail command timeout"}
+        return {"sent": False, "reason": "mail command timeout", "smtp": smtp_result}
     return {
         "sent": proc.returncode == 0,
+        "via": "mail-cli",
         "exit_code": proc.returncode,
         "stderr": proc.stderr[-500:],
+        "smtp": smtp_result,
     }
 
 
@@ -331,6 +370,12 @@ def main() -> int:
     load_dotenv(args.env_file)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Default notification recipient: --notify-email, else NOTIFY_EMAIL from env.
+    if not args.notify_email:
+        env_notify = os.environ.get("NOTIFY_EMAIL", "").strip()
+        if env_notify:
+            args.notify_email = [env_notify]
 
     base_url = f"{args.apigee_url.rstrip('/')}/axiom/v1/public"
     _, headers = refresh_headers(args)
